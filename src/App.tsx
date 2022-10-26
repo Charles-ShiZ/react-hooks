@@ -1,9 +1,15 @@
 import { useState } from 'react'
 import reactLogo from './assets/react.svg'
 import './App.css'
+import useRestoreState from './hooks/useRestoreState'
 
 function App() {
   const [count, setCount] = useState(0)
+  // useRestoreState({
+  //   store:{
+  //     data:
+  //   }
+  // })
 
   return (
     <div className="App">

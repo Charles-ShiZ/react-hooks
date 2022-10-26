@@ -1,17 +1,22 @@
-import { useEffect, useMemo } from 'react'
-import { useMount, useUpdateEffect, useDebounceFn } from 'ahooks'
-import * as ahooks from 'ahooks'
+/* eslint-disable @typescript-eslint/naming-convention */
+import { useEffect, useMemo, useRef } from 'react'
+import {
+  useUpdateEffect,
+  useDebounceFn,
+  useSessionStorageState,
+  useLocalStorageState,
+} from 'ahooks'
 
-type TObject = { [k: string]: unknown }
+type TObject = Record<string, unknown>
 
-type TStore<S> = {
+type StoreType<S> = {
   data: S
   required?: S extends TObject ? Array<keyof S> : undefined
   when?: unknown
   title?: string
 }
 
-type TRestore<S> = {
+type RestoreType<S> = {
   callback: (data: S) => void
   when?: unknown
   mount?: boolean
@@ -19,9 +24,10 @@ type TRestore<S> = {
   delay?: number
 }
 
-function typeOf(object: unknown) {
+const typeOf = (object: unknown) => {
   return Object.prototype.toString.call(object).slice(8, -1).toLowerCase()
 }
+
 const isValid = (newData: unknown): boolean => {
   if (typeOf(newData) === 'object') {
     const object = newData as TObject
@@ -45,36 +51,26 @@ const objectHasKey = (obj: TObject, key: string) => {
   // 真正地区分有无传参数
   return Object.keys(obj).includes(key)
 }
+
 const defaultPromot = '你有缓存数据，是否填充？'
-let hookIndex = 0
-// const mode = 'session' as 'session' | 'local'
+
 const storageHooks = new Map([
-  ['session', 'useSessionStorageState'],
-  ['local', 'useLocalStorageState'],
+  ['session', useSessionStorageState],
+  ['local', useLocalStorageState],
 ])
 
-function useRestoreState<S extends { [k: string]: unknown }>(config: {
-  key?: string
-  debugTag?: string
-  mode?: 'session' | 'local'
-  open: boolean
-  when?: unknown
-  store: TStore<S>
-  restore: TRestore<S>
-  test?: boolean 
-	// 测试模式，当 test 为 true 时，restore 数据时，将不会弹出提示，而是直接执行回调，
-	// 方便进行单元测试
-}): void
+const keySet = new Set<string>()
 
 function useRestoreState<S>(props: {
-  key?: string
+  key: string
   debugTag?: string
   when?: unknown
   mode?: 'session' | 'local'
   open: boolean
-  store: TStore<S>
-  restore: TRestore<S>
+  store: StoreType<S>
+  restore: RestoreType<S>
   test?: boolean
+  // 测试模式，当 test 为 true 时，restore 数据时，将不会弹出选择框，而是直接执行回调，方便进行单元测试
 }) {
   const {
     key,
@@ -83,22 +79,30 @@ function useRestoreState<S>(props: {
     open = false,
     store: { title = '', data: newData, required },
     restore: { callback, prompt = defaultPromot, delay = 500 },
-    test
+    test,
   } = props
-  if (!open) return
-  try {
-    const { pathname } = window.location
-    const autokey = useMemo(() => {
-      return pathname + '_' + ++hookIndex
-    }, [pathname])
-    if (debugTag) {
-      console.log(debugTag, key)
-    }
-    const storageHookName = storageHooks.get(mode) as
-      | 'useSessionStorageState'
-      | 'useLocalStorageState'
-    const [storedData, store] = ahooks[storageHookName]<Partial<S>>(key || `storedData_${autokey}`)
+  const storageHook = storageHooks.get(mode)
+  if (!open || !storageHook) return
 
+  if (debugTag) {
+    console.log(debugTag, key)
+  }
+
+  const storageHookKey = useRef(key)
+  // 每个 hook 只会执行一次
+  useMemo(() => {
+    if (keySet.has(storageHookKey.current)) {
+      //   console.error('useRestoreState 存在重复的 key 值，请保持 key 值唯一')
+      console.error('There are duplicate key ​of useRestoreState, please keep the key ​unique')
+    } else {
+      keySet.add(storageHookKey.current)
+    }
+  }, [key])
+
+  try {
+    const [storedData, store] = storageHook<Partial<S>>(storageHookKey.current)
+
+    /**************************** 根据 required, 提取出必填的数据 *****************************************/
     const requiredData = useMemo(() => {
       if (newData && typeof newData === 'object' && Array.isArray(required)) {
         const requiredData: Partial<S> = {}
@@ -107,7 +111,10 @@ function useRestoreState<S>(props: {
       }
       return newData
     }, [JSON.stringify(newData), JSON.stringify(required)])
+    /***************************************************************************************************/
 
+    /************ canStore：当传入数据有效、缓存的数据和新数据有差别 和 满足额外条件时，canStore 为 true **********
+     */
     const canStore = (() => {
       const isDataValid = isValid(requiredData)
       const isDifferent = JSON.stringify(storedData) !== JSON.stringify(requiredData)
@@ -122,7 +129,9 @@ function useRestoreState<S>(props: {
       })()
       return isDataValid && isDifferent && extraStoreCond
     })()
+    /****************************************************************************************************/
 
+    /************************* triggerRestore、canRestore ******************************/
     const triggerRestore = (() => {
       if (objectHasKey(props.restore, 'when')) {
         return !!props.restore.when
@@ -138,8 +147,9 @@ function useRestoreState<S>(props: {
       const isDifferent = JSON.stringify(storedData) !== JSON.stringify(requiredData)
       return hasStoredData && isDifferent
     })()
+    /****************************************************************************************************/
 
-    // 当目标数据变化时，判断是否应当缓存，如是，则提示并缓存
+    /****************** canStore 条件成立时，缓存数据 ******************/
     const { run: storeStateDeb } = useDebounceFn(
       () => {
         if (canStore) {
@@ -155,11 +165,13 @@ function useRestoreState<S>(props: {
       { wait: 500 }
     )
     useUpdateEffect(storeStateDeb, [JSON.stringify(requiredData)])
-  
+    /****************************************************************/
+
+    /********** triggerRestore、canRestore 条件成立时，释放数据 **********/
     const { run: restoreStateDeb } = useDebounceFn(
       () => {
         if (triggerRestore && canRestore) {
-          if(test) {
+          if (test) {
             callback({ ...newData, ...storedData })
             return
           }
@@ -169,16 +181,15 @@ function useRestoreState<S>(props: {
       { wait: delay }
     )
     useEffect(restoreStateDeb, [triggerRestore])
+    /****************************************************************/
+
     // if (mount) {
     //   useEffect(restoreStateDeb, [triggerRestore])
     // } else {
     //   useUpdateEffect(restoreStateDeb, [triggerRestore])
     // }
-    useMount(() => {
-      hookIndex = 0
-    })
   } catch (error) {
-    console.log('useRestoreState', error)
+    console.log(`useRestoreState-${storageHookKey}`, error)
   }
 }
 
