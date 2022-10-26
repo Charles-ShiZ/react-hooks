@@ -7,11 +7,11 @@ import {
   useLocalStorageState,
 } from 'ahooks'
 
-type TObject = Record<string, unknown>
+type Object = Record<string, unknown>
 
 type StoreType<S> = {
   data: S
-  required?: S extends TObject ? Array<keyof S> : undefined
+  required?: S extends Object ? Array<keyof S> : undefined
   when?: unknown
   title?: string
 }
@@ -30,7 +30,7 @@ const typeOf = (object: unknown) => {
 
 const isValid = (newData: unknown): boolean => {
   if (typeOf(newData) === 'object') {
-    const object = newData as TObject
+    const object = newData as Object
     return Object.keys(object).every((key) => isValid(object[key]))
   }
   if (typeOf(newData) === 'array') {
@@ -47,7 +47,7 @@ const isValid = (newData: unknown): boolean => {
   }
   return !!newData
 }
-const objectHasKey = (obj: TObject, key: string) => {
+const objectHasKey = (obj: Object, key: string) => {
   // 真正地区分有无传参数
   return Object.keys(obj).includes(key)
 }
@@ -61,7 +61,7 @@ const storageHooks = new Map([
 
 const keySet = new Set<string>()
 
-function useRestoreState<S>(props: {
+function useRestoreState<S extends Object>(props: {
   key: string
   debugTag?: string
   when?: unknown
@@ -106,7 +106,7 @@ function useRestoreState<S>(props: {
     const requiredData = useMemo(() => {
       if (newData && typeof newData === 'object' && Array.isArray(required)) {
         const requiredData: Partial<S> = {}
-        required.forEach((k) => (requiredData[k] = newData[k]))
+        required.forEach((k:keyof S) => (requiredData[k] = newData[k]))
         return requiredData
       }
       return newData
@@ -194,3 +194,7 @@ function useRestoreState<S>(props: {
 }
 
 export default useRestoreState
+
+const isDev = process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'
+
+export { isDev }
